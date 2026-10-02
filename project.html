@@ -1,0 +1,519 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Scroll of Shame - Ambient Edition</title>
+    <!-- AI Library -->
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+    <!-- Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Anton&family=Inter:wght@400;700;900&display=swap" rel="stylesheet">
+    
+    <style>
+        /* Base Reset */
+        * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Inter', sans-serif; }
+        body { background-color: #050505; overflow: hidden; height: 100vh; width: 100vw; -webkit-tap-highlight-color: transparent; touch-action: none; }
+
+        /* Canvas Background */
+        #bg-canvas { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 0; }
+        .story-ui { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 10; display: flex; flex-direction: column; align-items: center; pointer-events: none; }
+
+        /* Progress Bars */
+        .progress-container { width: 95%; max-width: 400px; display: flex; gap: 4px; padding-top: 15px; z-index: 20; }
+        .progress-bar { flex: 1; height: 4px; background: rgba(255, 255, 255, 0.2); border-radius: 2px; overflow: hidden; }
+        .progress-fill { height: 100%; width: 0%; background: #ffffff; transition: width 0.2s ease; }
+
+        /* Deck Physics */
+        .cards-container { position: relative; width: 100%; max-width: 400px; flex: 1; transition: transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1); will-change: transform; }
+        .deck-shrink { transform: scale(0.92) !important; }
+        .deck-enlarge { transform: scale(1.05) !important; }
+
+        /* Card Styling */
+        .card {
+            position: absolute; left: 50%; top: 50%; width: 90%; height: 78%;
+            border-radius: 24px; padding: 25px;
+            display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center;
+            box-shadow: 0 20px 50px rgba(0,0,0,0.6), inset 0 0 0 1px rgba(255,255,255,0.2);
+            transform: translate(calc(-50% + var(--dx)), calc(-50% + var(--dy))) rotate(var(--rot));
+            transition: transform 0.4s cubic-bezier(0.3, 1, 0.3, 1), opacity 0.4s;
+            will-change: transform, opacity; opacity: 0; pointer-events: none;
+        }
+
+        .card.in-deck { opacity: 1; }
+        .card.active {
+            transform: translate(-50%, -50%) rotate(0deg); 
+            z-index: 20 !important; opacity: 1; pointer-events: auto;
+            box-shadow: 0 30px 60px rgba(0,0,0,0.8), inset 0 0 0 2px rgba(255,255,255,0.4);
+        }
+
+        /* Idle Hint */
+        @keyframes idlePulse {
+            0%, 100% { transform: translate(-50%, -50%) scale(1) rotate(0deg); }
+            10% { transform: translate(-50%, -50%) scale(1.02) rotate(-1deg); }
+            20% { transform: translate(-50%, -50%) scale(1.02) rotate(1deg); }
+            30% { transform: translate(-50%, -50%) scale(1) rotate(0deg); }
+        }
+        .card.active.idle-hint { animation: idlePulse 2.5s ease-in-out infinite !important; }
+
+        /* Swipe Physics */
+        .card.active.card-shrink { transform: translate(-50%, -50%) scale(0.92) !important; transition: transform 0.1s ease-out; }
+        .card.active.card-enlarge { transform: translate(-50%, -50%) scale(1.08) !important; transition: transform 0.1s ease-out; }
+        .card.slide-down { transform: translate(-50%, 150vh) rotate(-10deg) !important; opacity: 1; z-index: 20 !important; transition: transform 0.4s ease-in; }
+        .card.slide-up-prep { transform: translate(-50%, 150vh) rotate(10deg) !important; opacity: 1; z-index: 21 !important; transition: none; }
+
+        /* Typography */
+        h1 { font-family: 'Anton', sans-serif; font-size: 3rem; margin-bottom: 10px; text-transform: uppercase; line-height: 1.1; letter-spacing: 1px;}
+        p { font-size: 1.1rem; font-weight: 700; line-height: 1.4; margin-bottom: 5px; }
+        .subtext { font-size: 0.9rem; opacity: 0.7; text-transform: uppercase; margin-top: 15px; letter-spacing: 1px; }
+
+        /* ONLY animate numbers and graphics */
+        .huge-stat { font-family: 'Anton', sans-serif; font-size: 5rem; margin: 15px 0; line-height: 1; opacity: 0; transform: scale(0.5); }
+        .card.active .huge-stat { animation: popStat 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) 0.1s forwards; }
+        
+        .pop-emoji { font-size: 6rem; margin: 20px 0; opacity: 0; transform: scale(0); }
+        .card.active .pop-emoji { animation: popStat 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) 0.1s forwards; }
+
+        @keyframes popStat { 0% { opacity: 0; transform: scale(0.5); } 100% { opacity: 1; transform: scale(1); } }
+
+        /* Colorful Themes */
+        .theme-0 { background: #FFE600; color: #111; }
+        .theme-1 { background: #FF007F; color: #FFF; }
+        .theme-2 { background: #00F0FF; color: #111; }
+        .theme-3 { background: #39FF14; color: #111; }
+        .theme-4 { background: #8A2BE2; color: #FFF; }
+        .theme-5 { background: #FF4500; color: #FFF; }
+        .theme-6 { background: #E6E6FA; color: #111; }
+        .theme-7 { background: #000080; color: #00F0FF; }
+        .theme-8 { background: #00FF7F; color: #111; }
+        .theme-9 { background: #FF1493; color: #FFF; }
+        .theme-10 { background: #1E90FF; color: #FFF; }
+        .theme-11 { background: #FFD700; color: #111; }
+        .theme-12 { background: #050505; color: #FFF; border: 2px solid #333;}
+        .theme-7 p, .theme-12 p { color: #FFF; }
+
+        /* Buttons */
+        .card button { pointer-events: auto; position: relative; z-index: 30; }
+        .btn {
+            background: #111; color: #fff; border: none; padding: 18px 30px; font-size: 1.1rem; font-weight: 900; 
+            border-radius: 50px; cursor: pointer; margin-top: 15px; transition: transform 0.1s; width: 100%; text-transform: uppercase;
+        }
+        .btn:active { transform: scale(0.95); }
+        .btn:disabled { background: rgba(0,0,0,0.3); color: rgba(255,255,255,0.5); }
+        .theme-7 .btn, .theme-12 .btn { background: #00F0FF; color: #111; } 
+        input[type="file"] { display: none; }
+
+        /* -------------------------------------
+           PERFECTED BAR GRAPHS (No overlap)
+           ------------------------------------- */
+        .visual-container { width: 100%; height: 200px; margin: 20px 0; display: flex; justify-content: space-evenly; border-bottom: 4px solid currentColor; padding-bottom: 5px; }
+        
+        .bar-group { display: flex; flex-direction: column; align-items: center; height: 100%; width: 70px; }
+        .bar-label { font-size: 0.9rem; font-weight: 900; text-transform: uppercase; margin-bottom: auto; z-index: 2; line-height: 1.2;}
+        .bar-track { display: flex; flex-direction: column; justify-content: flex-end; align-items: center; height: 130px; width: 100%; }
+        
+        .emoji-container { font-size: 2rem; margin-bottom: 5px; z-index: 2; line-height: 1; }
+        .bar { width: 100%; background: currentColor; border-radius: 6px 6px 0 0; opacity: 0.5; height: 0%; transition: height 1.2s cubic-bezier(0.34, 1.56, 0.64, 1); }
+
+    </style>
+</head>
+<body>
+
+    <canvas id="bg-canvas"></canvas>
+
+    <div class="story-ui">
+        <div class="progress-container" id="progress-container"></div>
+        <div class="cards-container" id="cards-container">
+            <!-- Cards injected via JS -->
+        </div>
+    </div>
+
+    <script>
+        /* =========================================
+           1. AMBIENT CALM SYNTHESIZER
+           ========================================= */
+        let actx, musicPlaying = false;
+        let step = 0, nextNoteTime = 0;
+
+        const arpNotes = [ 60, 67, 71, 74,  60, 67, 71, 74,   59, 62, 67, 71,  59, 62, 67, 71 ];
+        const bassNotes = [ 48, 48, 48, 48,  48, 48, 48, 48,   47, 47, 47, 47,  47, 47, 47, 47 ];
+
+        function initAudio() {
+            if (!actx) {
+                actx = new (window.AudioContext || window.webkitAudioContext)();
+                musicPlaying = true;
+                nextNoteTime = actx.currentTime + 0.1;
+                scheduleMusic();
+            }
+            if (actx.state === 'suspended') actx.resume();
+        }
+
+        function playNote(midi, time, type, duration, vol) {
+            const osc = actx.createOscillator(); const gain = actx.createGain();
+            osc.type = type; osc.frequency.value = 440 * Math.pow(2, (midi - 69) / 12);
+            osc.connect(gain); gain.connect(actx.destination);
+            gain.gain.setValueAtTime(vol, time);
+            gain.gain.exponentialRampToValueAtTime(0.001, time + duration);
+            osc.start(time); osc.stop(time + duration);
+        }
+
+        function scheduleMusic() {
+            if(!musicPlaying) return;
+            while (nextNoteTime < actx.currentTime + 0.1) {
+                playNote(arpNotes[step % arpNotes.length], nextNoteTime, 'sine', 0.5, 0.015);
+                if (step % 2 === 0) playNote(bassNotes[step % bassNotes.length], nextNoteTime, 'sine', 0.8, 0.02);
+                nextNoteTime += 0.35; 
+                step++;
+            }
+            requestAnimationFrame(scheduleMusic);
+        }
+
+        function playTapSound() {
+            if (!actx) return;
+            playNote(72, actx.currentTime, 'sine', 0.15, 0.05); 
+            playNote(76, actx.currentTime, 'sine', 0.15, 0.05); 
+        }
+
+        function playSwooshSound() {
+            if (!actx) return;
+            const osc = actx.createOscillator(); const gain = actx.createGain();
+            osc.connect(gain); gain.connect(actx.destination);
+            osc.type = 'sine'; osc.frequency.setValueAtTime(200, actx.currentTime);
+            osc.frequency.exponentialRampToValueAtTime(40, actx.currentTime + 0.3);
+            gain.gain.setValueAtTime(0.1, actx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, actx.currentTime + 0.3);
+            osc.start(actx.currentTime); osc.stop(actx.currentTime + 0.3);
+        }
+
+        /* =========================================
+           2. PROCEDURAL CANVAS BACKGROUND
+           ========================================= */
+        const canvas = document.getElementById('bg-canvas'); const ctx = canvas.getContext('2d');
+        let width, height, shapes = [];
+        const colors = ['rgba(255,0,127,0.15)', 'rgba(0,240,255,0.15)', 'rgba(204,255,0,0.15)'];
+        function resize() { width = canvas.width = window.innerWidth; height = canvas.height = window.innerHeight; }
+        window.addEventListener('resize', resize); resize();
+
+        class Shape {
+            constructor() {
+                this.type = ['circle', 'square', 'triangle'][Math.floor(Math.random() * 3)];
+                this.color = colors[Math.floor(Math.random() * colors.length)];
+                this.size = Math.random() * 30 + 15; this.x = Math.random() * width; this.y = Math.random() * height;
+                this.vx = (Math.random() - 0.5) * 1.0; this.vy = (Math.random() - 0.5) * 1.0;
+                this.rotation = Math.random() * Math.PI * 2; this.vRot = (Math.random() - 0.5) * 0.02;
+            }
+            draw() {
+                ctx.save(); ctx.translate(this.x, this.y); ctx.rotate(this.rotation);
+                ctx.strokeStyle = this.color; ctx.lineWidth = 2; ctx.beginPath();
+                if (this.type === 'circle') ctx.arc(0, 0, this.size, 0, Math.PI * 2);
+                else if (this.type === 'square') ctx.rect(-this.size, -this.size, this.size * 2, this.size * 2);
+                else { ctx.moveTo(0, -this.size); ctx.lineTo(this.size, this.size); ctx.lineTo(-this.size, this.size); ctx.closePath(); }
+                ctx.stroke(); ctx.restore();
+            }
+            update() {
+                this.x += this.vx; this.y += this.vy; this.rotation += this.vRot;
+                if (this.x < -this.size) this.x = width + this.size; if (this.x > width + this.size) this.x = -this.size;
+                if (this.y < -this.size) this.y = height + this.size; if (this.y > height + this.size) this.y = -this.size;
+            }
+        }
+        for (let i = 0; i < 15; i++) shapes.push(new Shape());
+        function animateBg() { ctx.clearRect(0, 0, width, height); shapes.forEach(s => { s.update(); s.draw(); }); requestAnimationFrame(animateBg); }
+        animateBg();
+
+        /* =========================================
+           3. A/B SPLIT CARD GENERATOR
+           ========================================= */
+        const cardsData = [
+            { theme: 0, title: "Hello.", text: "Welcome to your 2026 Reality Check.", vis: "", sub: "Tap Right To Start 👉" },
+            { theme: 1, title: "Evidence", text: "Upload your Screen Time stats.", vis: `<button class="btn" id="fakeUploadBtn">Select Image</button><input type="file" id="imageInput" accept="image/png, image/jpeg"><div id="loading-text" style="margin-top:15px; font-weight:900;"></div>`, sub: "" },
+            { theme: 2, title: "Time Lost", text: "You scrolled for", vis: `<div class="huge-stat" id="stat-yearly">0</div>`, sub: "Hours this year." },
+            { theme: 4, title: "LOTR", text: "In that exact time, you could have read the Lord of the Rings trilogy:", vis: `<div class="huge-stat" id="stat-book">0x</div>`, sub: "Instead, you watched short-form content." },
+            { theme: 3, title: "Distance", text: "If scrolling was walking, your thumb dragged:", vis: `<div class="huge-stat"><span id="thumb-km">0</span> KM</div>`, sub: "Across the glass." },
+            { theme: 5, title: "Scale", text: "Mount Everest is 8.8 KM tall.", 
+              vis: `<div class="visual-container">
+                      <div class="bar-group"><div class="bar-label">You</div><div class="bar-track"><div class="emoji-container">🧍</div><div class="bar" style="height:10%; opacity:1;"></div></div></div>
+                      <div class="bar-group"><div class="bar-label">Everest</div><div class="bar-track"><div class="emoji-container">⛰️</div><div class="bar" style="height:80%;"></div></div></div>
+                      <div class="bar-group"><div class="bar-label">Thumb</div><div class="bar-track"><div class="emoji-container">👍</div><div class="bar" id="thumb-bar" data-target-h="0%" style="height:0%; opacity:1; background:#fff;"></div></div></div>
+                    </div>`, sub: "Your thumb is an alpinist." },
+            { theme: 6, title: "Workout", text: "Swiping burns ~2 calories an hour.", vis: `<div class="huge-stat"><span id="stat-cals">0</span></div>`, sub: "Calories Burned." },
+            { theme: 7, title: "Diet", text: "That is the equivalent of:", vis: `<div class="pop-emoji">🍕</div><div class="huge-stat" style="font-size:3rem;"><span id="stat-pizza">0</span> Slices</div>`, sub: "Of Pizza." },
+            { theme: 8, title: "Staring", text: "Screens cut your blink rate by 66%.", vis: `<div class="huge-stat"><span id="stat-blinks">0</span></div>`, sub: "Missed Blinks." },
+            { theme: 9, title: "Dry Eyes", text: "Your eyes are officially a literal desert.", vis: `<div class="pop-emoji">👁️🌵</div>`, sub: "Please blink right now." },
+            { theme: 10, title: "The Abyss", text: "You scrolled to a depth of:", vis: `<div class="huge-stat"><span id="stat-depth">0</span> KM</div>`, sub: "Straight downwards." },
+            { theme: 7, title: "Pressure", text: "The Mariana Trench is 11 KM deep.", 
+              vis: `<div class="visual-container">
+                      <div class="bar-group" style="width:100px;"><div class="bar-label">Trench</div><div class="bar-track"><div class="emoji-container">🌊</div><div class="bar" style="height:90%;"></div></div></div>
+                      <div class="bar-group" style="width:100px;"><div class="bar-label">Your Depth</div><div class="bar-track"><div class="emoji-container">⚓</div><div class="bar" id="trench-bar" data-target-h="0%" style="height:0%; background:#00F0FF; opacity:1;"></div></div></div>
+                    </div>`, sub: "Crushing pressure." },
+            { theme: 11, title: "Statue", text: "You sat perfectly still in front of a screen for:", vis: `<div class="huge-stat"><span id="stat-still">0</span></div>`, sub: "Hours." },
+            { theme: 3, title: "Nature", text: "A bamboo shoot grows 1.5 inches an hour.", 
+              vis: `<div class="visual-container">
+                      <div class="bar-group" style="width:100px;"><div class="bar-label">You</div><div class="bar-track"><div class="emoji-container">🧍</div><div class="bar" style="height:20%;"></div></div></div>
+                      <div class="bar-group" style="width:100px;"><div class="bar-label">Bamboo</div><div class="bar-track"><div class="emoji-container">🎍</div><div class="bar" id="bamboo-bar" data-target-h="0%" style="height:0%; background:green; opacity:1;"></div></div></div>
+                    </div>`, sub: "It would have grown <span id='stat-bamboo' style='font-weight:900;'>0</span> feet past you." },
+            { theme: 9, title: "Olympian", text: "The distance your thumb traveled equals:", vis: `<div class="huge-stat" id="stat-marathons">0</div>`, sub: "Full 42km Marathons." },
+            { theme: 2, title: "Linguist", text: "It takes ~480 hours to learn a language. You could be fluent in:", vis: `<div class="huge-stat"><span id="stat-lang">0</span></div>`, sub: "Languages. Instead you speak Brainrot." },
+            { theme: 5, title: "Diagnosis", text: "Analyzing your habits...", vis: `<div class="pop-emoji">🩺</div>`, sub: `<span id="advice-text" style="color:#fff;">Wait for it.</span>` },
+            { theme: 12, title: "That's All", text: "Thanks for facing the music.", vis: `<div class="pop-emoji">💀</div>`, sub: "Tap Right to Restart 🔄" }
+        ];
+
+        const cardsContainer = document.getElementById('cards-container');
+        cardsData.forEach((c, index) => {
+            cardsContainer.innerHTML += `
+            <div class="card theme-${c.theme}" id="card-${index}">
+                <h1>${c.title}</h1>
+                <p>${c.text}</p>
+                ${c.vis}
+                <p class="subtext">${c.sub}</p>
+            </div>`;
+        });
+
+        // Deck State
+        const totalCards = cardsData.length;
+        let sequence = Array.from({length: totalCards}, (_, i) => i);
+        let currentPos = 0;
+        let isProcessing = false, isAnimating = false, hasData = false;
+        let idleTimer = null;
+
+        const progressContainer = document.getElementById('progress-container');
+        for(let i=0; i<totalCards; i++) progressContainer.innerHTML += `<div class="progress-bar"><div class="progress-fill" id="fill-${i}"></div></div>`;
+
+        document.querySelectorAll('.card').forEach(card => {
+            card.style.setProperty('--rot', (Math.random() * 8 - 4) + 'deg');
+            card.style.setProperty('--dx', (Math.random() * 16 - 8) + 'px');
+            card.style.setProperty('--dy', (Math.random() * 16 - 8) + 'px');
+        });
+
+        function resetIdle() {
+            clearTimeout(idleTimer);
+            document.querySelectorAll('.card').forEach(c => c.classList.remove('idle-hint'));
+            if (!isProcessing && !isAnimating && currentPos !== sequence.length - 1) {
+                idleTimer = setTimeout(() => {
+                    const c = document.getElementById('card-' + sequence[currentPos]);
+                    if(c) c.classList.add('idle-hint');
+                }, 8000); 
+            }
+        }
+
+        function triggerGraphAnimations(cardId) {
+            const card = document.getElementById('card-' + cardId);
+            const bars = card.querySelectorAll('.bar[data-target-h]');
+            bars.forEach(bar => {
+                const target = bar.getAttribute('data-target-h');
+                if(target) {
+                    setTimeout(() => { bar.style.height = target; }, 200);
+                }
+            });
+        }
+
+        function renderDeck() {
+            document.querySelectorAll('.card').forEach(c => {
+                // Instantly clean up falling animations to prevent "phasing" ghosts
+                if (c.classList.contains('slide-down')) {
+                    c.style.transition = 'none';
+                    c.classList.remove('slide-down');
+                    void c.offsetWidth; 
+                    c.style.transition = '';
+                }
+
+                c.classList.remove('active', 'in-deck', 'slide-up-prep', 'card-shrink', 'card-enlarge', 'idle-hint');
+                c.style.zIndex = 0;
+                
+                // Instantly reset all graphs to 0 so they don't shrink while hidden
+                c.querySelectorAll('.bar[data-target-h]').forEach(bar => {
+                    bar.style.transition = 'none';
+                    bar.style.height = '0%';
+                    void bar.offsetWidth;
+                    bar.style.transition = '';
+                });
+            });
+
+            for (let i = 0; i < 3; i++) {
+                if (currentPos + i < sequence.length) {
+                    const el = document.getElementById('card-' + sequence[currentPos + i]);
+                    if (i === 0) {
+                        el.classList.add('active');
+                        triggerGraphAnimations(sequence[currentPos]);
+                    }
+                    else { el.classList.add('in-deck'); el.style.zIndex = 10 - i; }
+                }
+            }
+            const fillPercent = (currentPos / (sequence.length - 1)) * totalCards;
+            for(let i=0; i<totalCards; i++) document.getElementById('fill-'+i).style.width = (i <= fillPercent) ? '100%' : '0%';
+            resetIdle();
+        }
+
+        // --- Touch Physics Engine ---
+        let isDown = false, tapTarget = null;
+        
+        document.body.addEventListener('pointerdown', (e) => {
+            if (isProcessing || isAnimating || e.target.closest('button') || e.target.closest('input')) return;
+            initAudio(); playTapSound(); resetIdle();
+            isDown = true;
+            tapTarget = e.clientX > window.innerWidth / 2 ? 'right' : 'left';
+            if (tapTarget === 'right') document.getElementById('card-'+sequence[currentPos]).classList.add('card-shrink');
+            else cardsContainer.classList.add('deck-shrink');
+        });
+
+        document.body.addEventListener('pointerup', (e) => {
+            if (!isDown || isProcessing || isAnimating) return;
+            isDown = false;
+            
+            if (e.target.closest('button') || e.target.closest('input')) {
+                document.getElementById('card-'+sequence[currentPos]).classList.remove('card-shrink');
+                cardsContainer.classList.remove('deck-shrink');
+                return;
+            }
+
+            isAnimating = true;
+
+            if (tapTarget === 'right') {
+                const currCard = document.getElementById('card-' + sequence[currentPos]);
+                currCard.classList.remove('card-shrink');
+                
+                if (sequence[currentPos] === 1 && !hasData) {
+                    document.getElementById('loading-text').innerText = "Upload an image first!";
+                    isAnimating = false; return;
+                }
+
+                if (currentPos === sequence.length - 1) { currentPos = 0; renderDeck(); isAnimating = false; return; }
+
+                currCard.classList.add('card-enlarge'); playSwooshSound();
+
+                setTimeout(() => {
+                    currCard.classList.remove('card-enlarge'); currCard.classList.add('slide-down'); currCard.classList.remove('active');
+                    setTimeout(() => { currentPos++; renderDeck(); isAnimating = false; }, 350);
+                }, 100);
+
+            } else {
+                cardsContainer.classList.remove('deck-shrink');
+                if (currentPos === 0) { isAnimating = false; return; }
+
+                cardsContainer.classList.add('deck-enlarge'); playSwooshSound();
+
+                const prevCard = document.getElementById('card-' + sequence[currentPos - 1]);
+                prevCard.classList.add('slide-up-prep'); void prevCard.offsetWidth;
+
+                setTimeout(() => {
+                    cardsContainer.classList.remove('deck-enlarge'); prevCard.classList.remove('slide-up-prep');
+                    currentPos--; renderDeck();
+                    setTimeout(() => isAnimating = false, 350);
+                }, 150);
+            }
+        });
+
+        document.body.addEventListener('pointercancel', () => isDown = false);
+        document.body.addEventListener('pointerleave', () => isDown = false);
+
+        renderDeck();
+
+        /* =========================================
+           4. AI VISION MATH, DATA BINDING & BYPASS
+           ========================================= */
+        const fakeUploadBtn = document.getElementById('fakeUploadBtn');
+        const imageInput = document.getElementById('imageInput');
+        const loadingText = document.getElementById('loading-text');
+
+        fakeUploadBtn.addEventListener('click', (e) => { e.stopPropagation(); initAudio(); imageInput.click(); });
+
+        function processDataAndContinue(hours, mins) {
+            // Core Math
+            const dHrs = hours + (mins / 60); const yHrs = dHrs * 365;
+            const dKm = ((yHrs * 5) / 1000).toFixed(1);
+
+            // Populate Stats
+            document.getElementById('stat-yearly').innerText = Math.round(yHrs).toLocaleString();
+            document.getElementById('stat-book').innerText = Math.floor(yHrs / 30) + "x";
+            document.getElementById('thumb-km').innerText = dKm;
+            
+            const cals = Math.round(yHrs * 2);
+            document.getElementById('stat-cals').innerText = cals.toLocaleString();
+            document.getElementById('stat-pizza').innerText = Math.max(1, Math.floor(cals / 285));
+            
+            document.getElementById('stat-blinks').innerText = Math.round(yHrs * 60 * 10).toLocaleString();
+            
+            document.getElementById('stat-depth').innerText = dKm;
+            let trenchH = (dKm / 11) * 100; if(trenchH > 150) trenchH = 150;
+            document.getElementById('trench-bar').setAttribute('data-target-h', trenchH + '%');
+
+            document.getElementById('stat-still').innerText = Math.round(yHrs).toLocaleString();
+            const bambooFt = Math.round(yHrs * 0.125);
+            document.getElementById('stat-bamboo').innerText = bambooFt.toLocaleString();
+            let bamH = (bambooFt / 100) * 100; if(bamH > 150) bamH = 150; if(bamH < 10) bamH = 10;
+            document.getElementById('bamboo-bar').setAttribute('data-target-h', bamH + '%');
+
+            document.getElementById('stat-marathons').innerText = (dKm / 42.195).toFixed(1);
+            document.getElementById('stat-lang').innerText = Math.floor(yHrs / 480);
+
+            let everestH = (dKm / 8.8) * 80; 
+            if(everestH > 200) everestH = 200; if(everestH < 10) everestH = 10;
+            document.getElementById('thumb-bar').setAttribute('data-target-h', everestH + '%');
+
+            const advice = document.getElementById('advice-text');
+            if (dHrs > 8) advice.innerText = "You spend a full-time job's worth of hours on your phone.";
+            else if (dHrs > 4) advice.innerText = "You're heavily addicted to the feed. Touch grass.";
+            else advice.innerText = "Not horrific, but you're still losing weeks of your year.";
+
+            // Sequence skips upload screen on restart
+            hasData = true; 
+            sequence = [0, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]; 
+
+            loadingText.innerText = "Done! Tap Right."; playSwooshSound();
+            
+            setTimeout(() => {
+                isProcessing = false; isAnimating = true;
+                document.getElementById('card-1').classList.add('slide-down'); document.getElementById('card-1').classList.remove('active');
+                setTimeout(() => { currentPos = 1; renderDeck(); isAnimating = false; }, 350);
+            }, 800); 
+        }
+
+        imageInput.addEventListener('change', async () => {
+            if (!imageInput.files[0]) return;
+            isProcessing = true; clearTimeout(idleTimer);
+            
+            const oldBypass = document.getElementById('bypassBtn');
+            if(oldBypass) oldBypass.remove();
+
+            const imageUrl = URL.createObjectURL(imageInput.files[0]);
+
+            fakeUploadBtn.disabled = true; fakeUploadBtn.innerText = "SCANNING..."; 
+            
+            const msgs = ["Reading pixels...", "Judging habits...", "Crunching data...", "Preparing roast..."];
+            let mIdx = 0; loadingText.innerText = msgs[0];
+            const loadInt = setInterval(() => { mIdx++; loadingText.innerText = msgs[mIdx % msgs.length]; }, 1000);
+
+            try {
+                const result = await Tesseract.recognize(imageUrl, 'eng');
+                const text = result.data.text;
+                
+                const hMatch = text.match(/(\d+)\s*(?:h|hour|hr)/i); const mMatch = text.match(/(\d+)\s*(?:m|min|minute)/i);
+                let hours = hMatch ? parseInt(hMatch[1]) : 0; let mins = mMatch ? parseInt(mMatch[1]) : 0;
+                
+                if (hours === 0 && mins === 0) { throw new Error("No numbers found."); } 
+
+                clearInterval(loadInt);
+                processDataAndContinue(hours, mins);
+
+            } catch (err) {
+                clearInterval(loadInt); isProcessing = false;
+                console.error("Scanner Error: ", err);
+                
+                loadingText.innerText = "Scanner Failed. Are you running a local server?";
+                loadingText.style.color = "#FF007F";
+                fakeUploadBtn.disabled = false; fakeUploadBtn.innerText = "Try Again";
+
+                // BYPASS BUTTON FOR DEMOS
+                const bypassBtn = document.createElement('button');
+                bypassBtn.id = 'bypassBtn'; bypassBtn.className = 'btn';
+                bypassBtn.style.background = '#00F0FF'; bypassBtn.style.color = '#111';
+                bypassBtn.innerText = "Bypass Scanner (Demo Mode)";
+                bypassBtn.onclick = (e) => {
+                    e.stopPropagation(); isProcessing = true; bypassBtn.remove();
+                    loadingText.style.color = "#FFF"; loadingText.innerText = "Injecting demo data...";
+                    setTimeout(() => { processDataAndContinue(6, 15); }, 500); 
+                };
+                document.getElementById('card-1').appendChild(bypassBtn);
+            }
+        });
+    </script>
+</body>
+</html>
